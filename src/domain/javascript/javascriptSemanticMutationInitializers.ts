@@ -80,6 +80,17 @@ const positionPrecedes = (
       left.declaratorIndex >= 0 &&
       left.declaratorIndex < right.declaratorIndex));
 
+/** Instance values run on construction; their computed keys run at definition. */
+const delayedInstanceFieldValue = (
+  parent: t.Node | undefined,
+  child: t.Node | undefined,
+): boolean =>
+  (t.isClassProperty(parent) ||
+    t.isClassPrivateProperty(parent) ||
+    t.isClassAccessorProperty(parent)) &&
+  !parent.static &&
+  parent.value === child;
+
 /** Order effects only in a non-repeating top-level activation. */
 export const semanticTopLevelEffectFollowsCapture = (
   capture: t.Node,
@@ -92,14 +103,7 @@ export const semanticTopLevelEffectFollowsCapture = (
     let child: t.Node | undefined;
     while (node !== undefined) {
       if (t.isFunction(node) || t.isLoop(node)) return null;
-      if (
-        (t.isClassProperty(node) ||
-          t.isClassPrivateProperty(node) ||
-          t.isClassAccessorProperty(node)) &&
-        !node.static &&
-        node.value === child
-      )
-        return null;
+      if (delayedInstanceFieldValue(node, child)) return null;
       if (t.isVariableDeclarator(node)) declarator = node;
       if (selected === null && t.isStatement(node))
         selected = statementPosition(node, parents, declarator);
@@ -240,6 +244,7 @@ const computeDirectMutationPosition = (
     if (
       parent === undefined ||
       t.isFunction(parent) ||
+      delayedInstanceFieldValue(parent, current) ||
       (t.isLogicalExpression(parent) && parent.right === current) ||
       (t.isAssignmentExpression(parent) &&
         ["&&=", "||=", "??="].includes(parent.operator) &&
@@ -284,7 +289,12 @@ const computeReferenceInitializerPosition = (
       return t.isBlockStatement(parent.body)
         ? { body: parent.body.body, index: -1, declaratorIndex: -1 }
         : null;
-    if (parent === undefined || t.isStatement(parent)) return null;
+    if (
+      parent === undefined ||
+      t.isStatement(parent) ||
+      delayedInstanceFieldValue(parent, current)
+    )
+      return null;
     if (t.isVariableDeclarator(parent)) {
       const declaration = parents.get(parent);
       return t.isVariableDeclaration(declaration)
@@ -388,7 +398,11 @@ const bindingReadPosition = (
       result = { position: null, repeating: true };
       break;
     }
-    if (parent === undefined || t.isFunction(parent)) {
+    if (
+      parent === undefined ||
+      t.isFunction(parent) ||
+      delayedInstanceFieldValue(parent, current)
+    ) {
       result = { position: null, repeating: false };
       break;
     }

@@ -89,6 +89,53 @@ console.log(JSON.stringify([captured(5),assigned(5),between(5),intermediate(5),n
 );
 
 cliTest(
+  "distinguishes delayed instance values from immediate static fields and computed keys",
+  async ({ cli }) => {
+    const fieldsSource = `
+export function delayed() { let x=0; class C { field=(x=1) } return {value:x}; }
+export function incoming(x) { class C { field=(x=1) } return {value:x}; }
+export function delayedPrivate() { let x=0; class C { #field=(x=1) } return {value:x}; }
+export function staticField() { let x=0; class C { static field=(x=1) } return {value:x}; }
+export function staticPrivate() { let x=0; class C { static #field=(x=1) } return {value:x}; }
+export function computedKey() { let x=0; class C { [x=1]=7 } return {value:x}; }
+`;
+    const oracle = await promisify(execFile)(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `${fieldsSource}
+console.log(JSON.stringify([delayed(),incoming(5),delayedPrivate(),staticField(),staticPrivate(),computedKey()]));`,
+      ],
+      { timeout: 10_000 },
+    );
+    expect(JSON.parse(oracle.stdout)).toEqual([
+      { value: 0 },
+      { value: 5 },
+      { value: 0 },
+      { value: 1 },
+      { value: 1 },
+      { value: 1 },
+    ]);
+    await verifyJavaScriptReturnShapes(cli, fieldsSource, (fields) => {
+      for (const name of ["delayed", "incoming", "delayedPrivate"])
+        expect(fields(name)).toContainEqual(
+          expect.objectContaining({ path: "/value", state: "unknown" }),
+        );
+      for (const name of ["staticField", "staticPrivate", "computedKey"])
+        expect(fields(name)).toContainEqual(
+          expect.objectContaining({
+            path: "/value",
+            state: "literal",
+            value: 1,
+          }),
+        );
+    });
+  },
+  120_000,
+);
+
+cliTest(
   "keeps a captured parameter unknown when comparing export shapes through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-captured-comparison-");

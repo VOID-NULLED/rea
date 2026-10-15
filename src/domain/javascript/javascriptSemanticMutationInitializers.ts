@@ -1,6 +1,11 @@
 import * as t from "@babel/types";
 
 import {
+  delayedInstanceFieldValue,
+  semanticBranchMayBeSkipped,
+} from "./javascriptSemanticEvaluationOrder.js";
+
+import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -79,17 +84,6 @@ const positionPrecedes = (
     (left.index === right.index &&
       left.declaratorIndex >= 0 &&
       left.declaratorIndex < right.declaratorIndex));
-
-/** Instance values run on construction; their computed keys run at definition. */
-const delayedInstanceFieldValue = (
-  parent: t.Node | undefined,
-  child: t.Node | undefined,
-): boolean =>
-  (t.isClassProperty(parent) ||
-    t.isClassPrivateProperty(parent) ||
-    t.isClassAccessorProperty(parent)) &&
-  !parent.static &&
-  parent.value === child;
 
 /** Order effects only in a non-repeating top-level activation. */
 export const semanticTopLevelEffectFollowsCapture = (
@@ -244,12 +238,7 @@ const computeDirectMutationPosition = (
     if (
       parent === undefined ||
       t.isFunction(parent) ||
-      delayedInstanceFieldValue(parent, current) ||
-      (t.isLogicalExpression(parent) && parent.right === current) ||
-      (t.isAssignmentExpression(parent) &&
-        ["&&=", "||=", "??="].includes(parent.operator) &&
-        parent.right === current) ||
-      (t.isConditionalExpression(parent) && parent.test !== current)
+      semanticBranchMayBeSkipped(parent, current)
     )
       return null;
     if (t.isStatement(parent)) return statementPosition(parent, parents);

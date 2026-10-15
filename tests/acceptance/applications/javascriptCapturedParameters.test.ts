@@ -136,6 +136,72 @@ console.log(JSON.stringify([delayed(),incoming(5),delayedPrivate(),staticField()
 );
 
 cliTest(
+  "retains possible aliases through skipped optional-chain and logical assignments",
+  async ({ cli }) => {
+    const cases = [
+      ["optionalCall", "receiver?.method(alias=replacement)"],
+      ["optionalCallee", "receiver?.method?.(alias=replacement)"],
+      ["optionalKey", "receiver?.[alias=replacement]"],
+      ["continuedKey", "receiver?.field[alias=replacement]"],
+      ["logicalWrite", "flag ||= (alias=replacement)"],
+      ["optionalTypedCall", "receiver?.method!(alias=replacement)"],
+      ["optionalTypedKey", "receiver?.field![alias=replacement]"],
+      ["groupedCall", "(receiver?.method)(alias=replacement)"],
+      ["ordinaryCall", "receiver.method(alias=replacement)"],
+      ["groupedTypedCall", "(receiver?.method!)(alias=replacement)"],
+      [
+        "assertedGroupedCall",
+        "(receiver?.method as ((value: unknown) => void))!(alias=replacement)",
+      ],
+    ] as const;
+    const aliasesSource = cases
+      .map(
+        ([name, expression]) => `export function ${name}(receiver,flag) {
+const original={member:1}; let alias=original; const replacement={member:2};
+${expression}; alias.member=3; return {value:original.member};
+}`,
+      )
+      .join("\n");
+    const oracle = await promisify(execFile)(
+      process.execPath,
+      [
+        "--input-type=module-typescript",
+        "-e",
+        `${aliasesSource}
+const receiver={method() {},field:{}};
+console.log(JSON.stringify([optionalCall(null),optionalCall(receiver),optionalCallee(null),optionalCallee(receiver),optionalKey(null),optionalKey(receiver),continuedKey(null),continuedKey(receiver),logicalWrite(null,true),logicalWrite(null,false),groupedCall(receiver),ordinaryCall(receiver),optionalTypedCall(null),optionalTypedCall(receiver),optionalTypedKey(null),optionalTypedKey(receiver),groupedTypedCall(receiver),assertedGroupedCall(receiver)]));`,
+      ],
+      { timeout: 10_000 },
+    );
+    expect(JSON.parse(oracle.stdout)).toEqual(
+      [3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 1, 1, 3, 1, 3, 1, 1, 1].map((value) => ({
+        value,
+      })),
+    );
+    await verifyJavaScriptReturnShapes(
+      cli,
+      aliasesSource,
+      (fields) => {
+        for (const [name] of cases.slice(0, 7))
+          expect(fields(name)).toContainEqual(
+            expect.objectContaining({ path: "/value", state: "unknown" }),
+          );
+        for (const [name] of cases.slice(7))
+          expect(fields(name)).toContainEqual(
+            expect.objectContaining({
+              path: "/value",
+              state: "literal",
+              value: 1,
+            }),
+          );
+      },
+      "app.ts",
+    );
+  },
+  120_000,
+);
+
+cliTest(
   "keeps a captured parameter unknown when comparing export shapes through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-captured-comparison-");
